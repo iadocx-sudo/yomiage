@@ -1,0 +1,438 @@
+<!doctype html>
+<html lang="ja"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#2f5d8a">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}[hidden]{display:none!important}*{box-sizing:border-box}</style>
+<title>よみあげノート</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap">
+<style>
+/* Layout: one-screen app — editor fills, speed chips + floating player + bottom nav fixed; list/settings as bottom sheets */
+:root{
+  --bg:#f3f4f6; --paper:#ffffff; --ink:#1f2430; --mute:#6b7280; --line:#e2e5ea;
+  --accent:#2f5d8a; --accent-ink:#ffffff; --accent-soft:#e3ecf5; --pin:#b7791f; --danger:#c0392b;
+  --shadow:0 6px 24px rgba(30,40,60,.14);
+  --f-body:"Zen Kaku Gothic New","Hiragino Sans","Noto Sans JP",system-ui,sans-serif;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#14171c; --paper:#1c2027; --ink:#e7e9ee; --mute:#9aa1ad; --line:#2c323c;
+  --accent:#7fb0e0; --accent-ink:#0f1620; --accent-soft:#233244; --pin:#e0b057; --danger:#ff7b6b;
+  --shadow:0 6px 24px rgba(0,0,0,.5); color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#14171c; --paper:#1c2027; --ink:#e7e9ee; --mute:#9aa1ad; --line:#2c323c;
+  --accent:#7fb0e0; --accent-ink:#0f1620; --accent-soft:#233244; --pin:#e0b057; --danger:#ff7b6b;
+  --shadow:0 6px 24px rgba(0,0,0,.5); color-scheme:dark}
+html,body{height:100%}
+body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:16px;overflow:hidden}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;-webkit-tap-highlight-color:transparent}
+button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.app{height:100%;display:flex;flex-direction:column;padding-left:max(12px,env(safe-area-inset-left,0px));padding-right:max(12px,env(safe-area-inset-right,0px))}
+.top{display:flex;align-items:center;gap:8px;padding-block:10px 6px;min-height:40px}
+.top .name{flex:1;min-width:0;font-weight:700;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.top .name small{font-weight:400;color:var(--mute);margin-left:6px}
+.sync{font-size:11px;color:var(--mute);padding:3px 8px;border:1px solid var(--line);border-radius:99px;white-space:nowrap}
+.paper{flex:1;min-height:0;background:var(--paper);border-radius:14px;border:1px solid var(--line);display:flex;flex-direction:column;overflow:hidden}
+textarea{flex:1;min-height:0;width:100%;border:0;resize:none;background:transparent;color:var(--ink);font:inherit;font-size:17px;line-height:1.8;padding:14px 16px;outline:none}
+textarea::placeholder{color:var(--mute)}
+.now{border-top:1px solid var(--line);padding:8px 14px;display:flex;flex-direction:column;gap:6px}
+.now p{margin:0;font-size:13px;color:var(--mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.now p b{color:var(--ink);font-weight:500}
+.bar{position:relative;height:18px;cursor:pointer;touch-action:none}
+.bar::before{content:"";position:absolute;left:0;right:0;top:8px;height:3px;border-radius:2px;background:var(--line)}
+.bar i{position:absolute;left:0;top:8px;height:3px;border-radius:2px;background:var(--accent)}
+.bar em{position:absolute;top:3px;width:13px;height:13px;margin-left:-6px;border-radius:50%;background:var(--accent)}
+.meta{display:flex;justify-content:space-between;font-size:11px;color:var(--mute);font-variant-numeric:tabular-nums}
+.speeds{display:flex;gap:6px;overflow-x:auto;padding-block:10px 4px;scrollbar-width:none}
+.speeds::-webkit-scrollbar{display:none}
+.chip{flex:none;padding:6px 12px;border-radius:99px;border:1px solid var(--line);background:var(--paper);font-size:14px;font-variant-numeric:tabular-nums}
+.chip[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:700}
+.player{align-self:center;display:flex;align-items:center;gap:18px;background:var(--paper);border:1px solid var(--line);box-shadow:var(--shadow);border-radius:99px;padding:6px 18px;margin-block:8px}
+.skip{position:relative;width:48px;height:48px;display:grid;place-items:center}
+.skip svg{width:30px;height:30px;fill:none;stroke:var(--ink);stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.skip span{position:absolute;font-size:10.5px;font-weight:700;top:18px;font-variant-numeric:tabular-nums}
+.play{width:58px;height:58px;border-radius:50%;background:var(--accent);display:grid;place-items:center}
+.play svg{width:26px;height:26px;fill:var(--accent-ink)}
+nav{display:grid;grid-template-columns:repeat(5,1fr);border-top:1px solid var(--line);margin-inline:calc(-1 * max(12px,env(safe-area-inset-left,0px))) calc(-1 * max(12px,env(safe-area-inset-right,0px)));background:var(--paper);padding-bottom:env(safe-area-inset-bottom,0px)}
+nav button{display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px 0 10px;font-size:11px;color:var(--mute)}
+nav svg{width:22px;height:22px;fill:none;stroke:var(--ink);stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+/* sheets */
+.scrim{position:fixed;inset:0;background:rgba(10,14,20,.45);z-index:20}
+.sheet{position:fixed;left:0;right:0;bottom:0;z-index:21;background:var(--paper);border-radius:18px 18px 0 0;max-height:86%;display:flex;flex-direction:column;box-shadow:var(--shadow);padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-bottom:env(safe-area-inset-bottom,0px)}
+.sheet header{display:flex;align-items:center;gap:8px;padding-block:14px 10px}
+.sheet h2{flex:1;margin:0;font-size:17px;text-wrap:balance}
+.close{padding:6px 10px;color:var(--accent);font-weight:700}
+.sheet .body{overflow-y:auto;padding-bottom:16px;display:flex;flex-direction:column;gap:14px}
+.empty{color:var(--mute);font-size:14px;line-height:1.7;padding:20px 0}
+.group{font-size:11px;letter-spacing:.08em;color:var(--mute);margin:4px 0 -6px}
+.item{display:flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:12px;padding:8px 6px 8px 12px;background:var(--bg)}
+.item.cur{border-color:var(--accent)}
+.item .t{flex:1;min-width:0;text-align:left;padding:4px 0}
+.item .t b{display:block;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.item .t small{display:block;color:var(--mute);font-size:11.5px;margin-top:2px;font-variant-numeric:tabular-nums}
+.ib{width:34px;height:34px;display:grid;place-items:center;border-radius:8px}
+.ib svg{width:19px;height:19px;fill:none;stroke:var(--mute);stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.ib:disabled{opacity:.3}
+.ib.on svg{stroke:var(--pin);fill:var(--pin)}
+.ib.del svg{stroke:var(--danger)}
+.ib.confirm{width:auto;padding:0 8px;background:var(--danger);color:var(--paper);font-size:12px;font-weight:700}
+label.f{display:flex;flex-direction:column;gap:6px;font-size:13px;color:var(--mute)}
+input[type=text],select{font:inherit;font-size:16px;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px 12px;width:100%}
+.seg{display:flex;gap:6px;flex-wrap:wrap}
+.row{display:flex;gap:8px;flex-wrap:wrap}
+.btn{padding:11px 16px;border-radius:10px;border:1px solid var(--line);font-weight:500}
+.btn.pri{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:700}
+.note{font-size:12px;color:var(--mute);line-height:1.7;margin:0}
+.toast{position:fixed;left:50%;bottom:calc(150px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--paper);padding:8px 14px;border-radius:99px;font-size:13px;z-index:30;white-space:nowrap}
+@media (prefers-reduced-motion:no-preference){.sheet{animation:up .22s ease-out}@keyframes up{from{transform:translateY(30px);opacity:.6}}}
+</style>
+</head><body>
+
+
+<div class="app">
+  <div class="top">
+    <div class="name" id="docName">新しいテキスト</div>
+    <span class="sync" id="sync">端末に保存</span>
+  </div>
+  <div class="paper">
+    <textarea id="ed" spellcheck="false" placeholder="ここに読み上げる文章を貼り付けるか、下の「読込」から .txt ファイルを開いてください。
+文字を選択してから再生すると、選択した位置から読み上げます。"></textarea>
+    <div class="now">
+      <p id="cur">停止中</p>
+      <div class="bar" id="bar" role="slider" aria-label="読み上げ位置" tabindex="0"><i id="fill"></i><em id="knob"></em></div>
+      <div class="meta"><span id="pos">0 / 0字</span><span id="eta">残り 0:00</span></div>
+    </div>
+  </div>
+  <div class="speeds" id="speeds" role="group" aria-label="速度"></div>
+  <div class="player">
+    <button class="skip" id="back" aria-label="戻る"><svg viewBox="0 0 32 32"><path d="M9 7 5 11l4 4"/><path d="M5 11h13a9 9 0 1 1-9 9"/></svg><span id="backN">20</span></button>
+    <button class="play" id="play" aria-label="再生"><svg id="playIco" viewBox="0 0 24 24"><path d="M7 4.5v15l13-7.5z"/></svg></button>
+    <button class="skip" id="fwd" aria-label="進む"><svg viewBox="0 0 32 32"><path d="m23 7 4 4-4 4"/><path d="M27 11H14a9 9 0 1 0 9 9"/></svg><span id="fwdN">20</span></button>
+  </div>
+  <nav>
+    <button id="nOpen"><svg viewBox="0 0 24 24"><path d="M4 4h10l6 6v10H4z"/><path d="M14 4v6h6M12 13v5M9.5 15.5 12 18l2.5-2.5"/></svg>読込</button>
+    <button id="nClear"><svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg>クリア</button>
+    <button id="nSave"><svg viewBox="0 0 24 24"><path d="M6 3h12v18l-6-4-6 4z"/></svg>保存</button>
+    <button id="nList"><svg viewBox="0 0 24 24"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/></svg>保存リスト</button>
+    <button id="nSet"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-2.7-1.1l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.6 1.6 0 0 0 3.5 14H3a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1.1-2.7l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.6 1.6 0 0 0 9.7 3.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 2.7 1.1l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0 1.1 2.7H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1.3z"/></svg>設定</button>
+  </nav>
+</div>
+<input type="file" id="file" accept=".txt,text/plain" hidden>
+<input type="file" id="bkfile" accept=".json,application/json" hidden>
+
+<div class="scrim" id="scrim" hidden></div>
+
+<section class="sheet" id="shSave" hidden aria-labelledby="hSave">
+  <header><h2 id="hSave">テキストを保存</h2><button class="close" data-close>閉じる</button></header>
+  <div class="body">
+    <label class="f">タイトル<input type="text" id="saveTitle" maxlength="60"></label>
+    <div class="row" id="saveBtns"></div>
+    <p class="note" id="saveNote"></p>
+  </div>
+</section>
+
+<section class="sheet" id="shList" hidden aria-labelledby="hList">
+  <header><h2 id="hList">保存リスト</h2><button class="close" data-close>閉じる</button></header>
+  <div class="body" id="listBody"></div>
+</section>
+
+<section class="sheet" id="shSet" hidden aria-labelledby="hSet">
+  <header><h2 id="hSet">設定</h2><button class="close" data-close>閉じる</button></header>
+  <div class="body">
+    <label class="f">声（日本語の音声）<select id="voice"></select></label>
+    <div class="row"><button class="btn" id="testVoice">この声で試す</button></div>
+    <p class="note" id="voiceNote"></p>
+    <div class="f" style="display:flex;flex-direction:column;gap:6px;font-size:13px;color:var(--mute)">戻るボタンの秒数<div class="seg" id="segBack"></div></div>
+    <div class="f" style="display:flex;flex-direction:column;gap:6px;font-size:13px;color:var(--mute)">進むボタンの秒数<div class="seg" id="segFwd"></div></div>
+    <p class="note">秒数は「いまの速度で聞いた時間」です。2倍速で20秒戻ると、等倍の約40秒分の文字が戻ります。読み上げ速度は再生しながら自動で学習し、精度が上がります（現在の推定：等倍で毎秒 <b id="cpsNow">-</b> 字）。</p>
+    <div class="row"><button class="btn" id="resetCps">速度の学習をリセット</button></div>
+  </div>
+</section>
+
+<div class="toast" id="toast" hidden></div>
+
+<script>
+(()=>{
+const $=id=>document.getElementById(id);
+const synth=window.speechSynthesis;
+const RATES=[1,1.5,1.8,2,2.5,3];
+const SECS=[10,20,30];
+const LS={get(k,d){try{const v=localStorage.getItem(k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}};
+
+/* ---------- settings ---------- */
+const S=Object.assign({rate:2,back:20,fwd:20,voice:"",cps:7},LS.get("yn.settings",{}));
+const saveS=()=>LS.set("yn.settings",S);
+
+/* ---------- state ---------- */
+const ed=$("ed");
+let draft=LS.get("yn.draft",{text:"",pos:0,id:null,title:""});
+ed.value=draft.text||"";
+let curId=draft.id, curTitle=draft.title||"";
+let pos=Math.min(draft.pos||0,ed.value.length);
+let chunks=[], chunkText="";
+let playing=false, token=0, utt=null, uttBase=0, uttLen=0, uttT0=0, lastBoundary=null, wake=null;
+
+function toast(m){const t=$("toast");t.textContent=m;t.hidden=false;clearTimeout(toast.h);toast.h=setTimeout(()=>t.hidden=true,1800)}
+function fmt(s){s=Math.max(0,Math.round(s));return Math.floor(s/60)+":"+String(s%60).padStart(2,"0")}
+
+/* ---------- chunking ---------- */
+function build(){
+  const t=ed.value; if(t===chunkText)return; chunkText=t; chunks=[];
+  const re=/[^。！？!?\n]*[。！？!?\n]+|[^。！？!?\n]+$/g; let m;
+  while((m=re.exec(t))){
+    let s=m.index,str=m[0];
+    while(str.length>110){ // long sentence: split at 、 or space
+      let cut=Math.max(str.lastIndexOf("、",110),str.lastIndexOf(" ",110),str.lastIndexOf("，",110));
+      if(cut<30)cut=100; cut++;
+      chunks.push({s,e:s+cut}); s+=cut; str=str.slice(cut);
+    }
+    if(str.trim())chunks.push({s,e:s+str.length});
+    if(!m[0])re.lastIndex++;
+  }
+}
+function chunkAt(p){for(let i=0;i<chunks.length;i++)if(p<chunks[i].e)return i;return chunks.length}
+function snap(p){ // move to a natural break just before p
+  const t=ed.value; if(p<=0)return 0; if(p>=t.length)return t.length;
+  for(let i=p;i>Math.max(0,p-24);i--){if("。、！？!?\n，".includes(t[i-1]))return i}
+  return p;
+}
+
+/* ---------- voices ---------- */
+let voices=[];
+function loadVoices(){
+  voices=synth?synth.getVoices().filter(v=>/^ja/i.test(v.lang)):[];
+  const sel=$("voice"); sel.innerHTML="";
+  if(!voices.length){sel.innerHTML='<option value="">端末の標準の声</option>';$("voiceNote").textContent="日本語の声が見つかりません。Androidの設定 →「テキスト読み上げ」で Google 音声サービスの日本語データを入れると選べるようになります。";return}
+  voices.forEach(v=>{const o=document.createElement("option");o.value=v.voiceURI;o.textContent=v.name+(v.localService?"":"（オンライン）");sel.appendChild(o)});
+  if(!voices.some(v=>v.voiceURI===S.voice))S.voice=voices[0].voiceURI;
+  sel.value=S.voice;
+  $("voiceNote").textContent=voices.length+"種類の日本語音声が使えます。声の種類はスマホの音声エンジン次第です。";
+}
+if(synth){loadVoices();synth.onvoiceschanged=loadVoices}
+$("voice").onchange=e=>{S.voice=e.target.value;saveS();if(playing)speakFrom(curPos())};
+$("testVoice").onclick=()=>{if(!synth)return;stop();const u=new SpeechSynthesisUtterance("この声で読み上げます。速度は"+S.rate+"倍です。");applyVoice(u);synth.speak(u)};
+function applyVoice(u){u.lang="ja-JP";u.rate=S.rate;const v=voices.find(v=>v.voiceURI===S.voice);if(v)u.voice=v}
+
+/* ---------- playback ---------- */
+function curPos(){
+  if(!playing)return pos;
+  if(lastBoundary!=null)return Math.min(uttBase+uttLen,lastBoundary);
+  const est=(performance.now()-uttT0)/1000*S.cps*S.rate;
+  return Math.min(uttBase+uttLen,uttBase+Math.floor(est));
+}
+function speakFrom(p){
+  if(!synth){toast("このブラウザは読み上げに対応していません");return}
+  build(); const my=++token; synth.cancel();
+  const t=ed.value; p=Math.max(0,Math.min(p,t.length));
+  const i=chunkAt(p); if(i>=chunks.length){finish();return}
+  const s=Math.max(p,chunks[i].s), e=chunks[i].e, str=t.slice(s,e);
+  pos=s; uttBase=s; uttLen=str.length; lastBoundary=null;
+  if(!str.trim()){speakFrom(e);return}
+  const u=new SpeechSynthesisUtterance(str); applyVoice(u); utt=u;
+  u.onstart=()=>{if(my===token)uttT0=performance.now()};
+  u.onboundary=ev=>{if(my===token&&typeof ev.charIndex==="number"&&ev.charIndex>0)lastBoundary=uttBase+ev.charIndex};
+  u.onend=()=>{
+    if(my!==token)return;
+    const dur=(performance.now()-uttT0)/1000;
+    if(dur>1.2&&uttLen>=12){const c=uttLen/(dur*S.rate);if(c>2&&c<20){S.cps=+(S.cps*0.8+c*0.2).toFixed(2);saveS()}}
+    pos=e; if(playing)speakFrom(e);
+  };
+  u.onerror=ev=>{if(my!==token)return;if(ev.error==="interrupted"||ev.error==="canceled")return;playing=false;ui();toast("読み上げエラー："+ev.error)};
+  uttT0=performance.now();
+  setTimeout(()=>{if(my===token)synth.speak(u)},40);
+  ui();
+}
+function play(){
+  if(!ed.value.trim()){toast("文章を入力してください");return}
+  build();
+  if(ed.selectionStart!==ed.selectionEnd&&document.activeElement===ed)pos=ed.selectionStart;
+  if(pos>=ed.value.length)pos=0;
+  playing=true; ed.blur(); lockWake(); speakFrom(snap(pos));
+}
+function stop(){pos=curPos();playing=false;token++;if(synth)synth.cancel();releaseWake();ui();persist()}
+function finish(){playing=false;pos=ed.value.length;releaseWake();ui();persist();toast("最後まで読みました")}
+function skip(dir){
+  const sec=dir<0?S.back:S.fwd;
+  const chars=Math.round(sec*S.cps*S.rate);
+  let p=curPos()+dir*chars; p=Math.max(0,Math.min(ed.value.length,p)); p=snap(p);
+  if(playing)speakFrom(p); else {pos=p;ui();persist()}
+  toast((dir<0?"◀ ":"▶ ")+sec+"秒（約"+chars+"字）");
+}
+$("play").onclick=()=>playing?stop():play();
+$("back").onclick=()=>skip(-1);
+$("fwd").onclick=()=>skip(1);
+
+async function lockWake(){try{if(navigator.wakeLock&&!wake){wake=await navigator.wakeLock.request("screen");wake.addEventListener("release",()=>wake=null)}}catch(e){}}
+function releaseWake(){try{wake&&wake.release()}catch(e){}wake=null}
+document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"&&playing)lockWake()});
+
+/* progress bar seek */
+const bar=$("bar");
+function seekEv(ev){const r=bar.getBoundingClientRect();const x=Math.max(0,Math.min(1,(ev.clientX-r.left)/r.width));const p=snap(Math.round(x*ed.value.length));if(playing)speakFrom(p);else{pos=p;ui()}}
+bar.addEventListener("pointerdown",ev=>{seekEv(ev);bar.setPointerCapture(ev.pointerId)});
+bar.addEventListener("pointermove",ev=>{if(ev.buttons&&!playing)seekEv(ev)});
+bar.addEventListener("pointerup",ev=>{if(playing)seekEv(ev);persist()});
+bar.addEventListener("keydown",ev=>{if(ev.key==="ArrowLeft")skip(-1);if(ev.key==="ArrowRight")skip(1)});
+
+/* ---------- ui ---------- */
+function ui(){
+  const L=ed.value.length, p=Math.min(curPos(),L), f=L?p/L*100:0;
+  $("fill").style.width=f+"%"; $("knob").style.left=f+"%";
+  $("pos").textContent=p.toLocaleString()+" / "+L.toLocaleString()+"字";
+  $("eta").textContent="残り "+fmt((L-p)/(S.cps*S.rate));
+  $("playIco").innerHTML=playing?'<path d="M6.5 4.5h4v15h-4zM13.5 4.5h4v15h-4z"/>':'<path d="M7 4.5v15l13-7.5z"/>';
+  $("play").setAttribute("aria-label",playing?"一時停止":"再生");
+  if(playing){const s=ed.value.slice(uttBase,uttBase+uttLen).replace(/\s+/g," ").trim();$("cur").innerHTML="";const b=document.createElement("b");b.textContent=s;$("cur").append("▶ ",b)}
+  else $("cur").textContent=p>0&&p<L?"一時停止中・続きから再生します":"停止中";
+  $("backN").textContent=S.back; $("fwdN").textContent=S.fwd;
+  $("back").setAttribute("aria-label",S.back+"秒戻る"); $("fwd").setAttribute("aria-label",S.fwd+"秒進む");
+  document.querySelectorAll("#speeds .chip").forEach(c=>c.setAttribute("aria-pressed",+c.dataset.r===S.rate));
+  $("docName").innerHTML=""; $("docName").append(curTitle||"新しいテキスト"); if(curId&&items.some(x=>x.id===curId)){const sm=document.createElement("small");sm.textContent="保存済み";$("docName").append(sm)}
+  $("cpsNow").textContent=S.cps.toFixed(1);
+}
+setInterval(()=>{if(playing)ui()},400);
+
+RATES.forEach(r=>{const b=document.createElement("button");b.className="chip";b.dataset.r=r;b.textContent=r.toFixed(1)+"×";b.onclick=()=>{S.rate=r;saveS();if(playing)speakFrom(snap(curPos()));ui()};$("speeds").appendChild(b)});
+function seg(el,key){SECS.forEach(s=>{const b=document.createElement("button");b.className="chip";b.textContent=s+"秒";b.onclick=()=>{S[key]=s;saveS();paint();ui()};el.appendChild(b)});const paint=()=>[...el.children].forEach((b,i)=>b.setAttribute("aria-pressed",SECS[i]===S[key]));paint()}
+seg($("segBack"),"back"); seg($("segFwd"),"fwd");
+$("resetCps").onclick=()=>{S.cps=7;saveS();ui();toast("学習をリセットしました")};
+
+let pt;function persist(){clearTimeout(pt);pt=setTimeout(()=>LS.set("yn.draft",{text:ed.value,pos:curPos(),id:curId,title:curTitle}),300)}
+ed.addEventListener("input",()=>{if(playing)stop();if(pos>ed.value.length)pos=ed.value.length;persist();ui()});
+ed.addEventListener("focus",()=>{if(playing)stop()});
+
+/* ---------- file / clear ---------- */
+$("nOpen").onclick=()=>$("file").click();
+$("file").onchange=async e=>{
+  const f=e.target.files[0]; if(!f)return; e.target.value="";
+  const buf=await f.arrayBuffer(); let t=new TextDecoder("utf-8").decode(buf);
+  if((t.match(/\uFFFD/g)||[]).length>3){try{t=new TextDecoder("shift_jis").decode(buf)}catch(_){}}
+  stop(); ed.value=t.replace(/^\uFEFF/,""); pos=0; curId=null; curTitle=f.name.replace(/\.[^.]+$/,""); persist(); ui(); toast("「"+curTitle+"」を読み込みました");
+};
+$("nClear").onclick=()=>{stop();ed.value="";pos=0;curId=null;curTitle="";persist();ui();toast("画面をクリアしました（保存リストは残ります）")};
+
+/* ---------- storage: db (account) with localStorage fallback ---------- */
+let items=LS.get("yn.items",[]), db=null, col=null;
+function setSync(t){$("sync").textContent=t}
+const sortItems=()=>items.sort((a,b)=>(b.pinned-a.pinned)||(a.order-b.order));
+function cacheItems(){LS.set("yn.items",items)}
+async function remotePut(it){if(!col)return;try{await col.doc(it.id).set(it)}catch(e){setSync("同期エラー");}}
+async function remoteDel(id){if(!col)return;try{await col.doc(id).delete()}catch(e){setSync("同期エラー")}}
+(async()=>{
+  try{
+    if(!window.claude||!claude.use)return;
+    const [d,u]=await Promise.all([claude.use("db"),claude.use("user")]);
+    if(!d||!u)return; const uid=await u.id(); if(!uid)return;
+    db=d; col=db.collection("data/users/"+uid);
+    const snap=await col.get(); const remote=[];
+    snap.docs.forEach(x=>{if(x.id!=="settings"){const v=x.data();if(v&&typeof v.body==="string")remote.push(v)}});
+    if(!remote.length&&items.length){for(const it of items)await remotePut(it)}
+    else{items=remote;cacheItems()}
+    sortItems(); setSync("アカウントに保存"); renderList(); ui();
+  }catch(e){setSync("この端末に保存")}
+})();
+
+function newId(){return "t"+Date.now().toString(36)+Math.random().toString(36).slice(2,6)}
+function bytes(s){return new Blob([s]).size}
+
+/* save sheet */
+$("nSave").onclick=()=>{
+  if(!ed.value.trim()){toast("保存する文章がありません");return}
+  const ex=items.find(x=>x.id===curId);
+  $("saveTitle").value=curTitle||ed.value.trim().replace(/\s+/g," ").slice(0,24);
+  const box=$("saveBtns"); box.innerHTML="";
+  const mk=(label,cls,fn)=>{const b=document.createElement("button");b.className="btn "+cls;b.textContent=label;b.onclick=fn;box.appendChild(b)};
+  if(ex){mk("上書き保存","pri",()=>doSave(ex));mk("別名で保存","",()=>doSave(null))}else mk("保存する","pri",()=>doSave(null));
+  $("saveNote").textContent=bytes(ed.value)>240000?"長い文章のため、アカウントには保存できずこの端末だけに保存されます。":"";
+  openSheet("shSave"); setTimeout(()=>$("saveTitle").focus(),50);
+};
+async function doSave(ex){
+  const title=$("saveTitle").value.trim()||"無題";
+  const now=Date.now();
+  let it;
+  if(ex){it=Object.assign(ex,{title,body:ed.value,updated:now})}
+  else{const minO=items.filter(x=>!x.pinned).reduce((m,x)=>Math.min(m,x.order),1);it={id:newId(),title,body:ed.value,pinned:false,order:minO-1,updated:now};items.push(it)}
+  curId=it.id; curTitle=title; sortItems(); cacheItems(); persist(); closeSheets(); ui(); toast("保存しました");
+  if(bytes(it.body)<=240000)remotePut(it);
+}
+
+/* list sheet */
+$("nList").onclick=()=>{renderList();openSheet("shList")};
+const ico={
+  pin:'<svg viewBox="0 0 24 24"><path d="M9 3h6l-1 6 4 3v2H6v-2l4-3zM12 14v7"/></svg>',
+  up:'<svg viewBox="0 0 24 24"><path d="m6 15 6-6 6 6"/></svg>',
+  down:'<svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>',
+  del:'<svg viewBox="0 0 24 24"><path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13"/></svg>'
+};
+function renderList(){
+  const body=$("listBody"); body.innerHTML="";
+  if(!items.length){addBackup(body,true);body.insertAdjacentHTML("afterbegin",'<p class="empty">まだ保存したテキストはありません。<br>文章を表示した状態で下の「保存」を押すと、ここに並びます。よく使うものは📌でピン留めすると一番上に固定されます。</p>');return}
+  sortItems();
+  const groups=[["ピン留め",items.filter(x=>x.pinned)],["保存済み",items.filter(x=>!x.pinned)]];
+  for(const [name,list] of groups){
+    if(!list.length)continue;
+    const g=document.createElement("div");g.className="group";g.textContent=name+"（"+list.length+"）";body.appendChild(g);
+    list.forEach((it,i)=>{
+      const row=document.createElement("div");row.className="item"+(it.id===curId?" cur":"");
+      const t=document.createElement("button");t.className="t";
+      const b=document.createElement("b");b.textContent=it.title;const sm=document.createElement("small");
+      const d=new Date(it.updated);sm.textContent=it.body.length.toLocaleString()+"字・"+(d.getMonth()+1)+"/"+d.getDate();
+      t.append(b,sm);t.onclick=()=>{stop();ed.value=it.body;curId=it.id;curTitle=it.title;pos=0;persist();closeSheets();ui();toast("「"+it.title+"」を開きました")};
+      const btn=(html,cls,label,fn,dis)=>{const x=document.createElement("button");x.className="ib "+cls;x.innerHTML=html;x.setAttribute("aria-label",label);x.disabled=!!dis;x.onclick=fn;return x};
+      const pinB=btn(ico.pin,it.pinned?"on":"",it.pinned?"ピン留めを外す":"ピン留め",()=>{it.pinned=!it.pinned;const grp=items.filter(x=>x.pinned===it.pinned&&x!==it);it.order=(it.pinned?grp.reduce((m,x)=>Math.max(m,x.order),0)+1:grp.reduce((m,x)=>Math.min(m,x.order),1)-1);commit([it])});
+      const upB=btn(ico.up,"","上へ",()=>swap(list,i,i-1),i===0);
+      const dnB=btn(ico.down,"","下へ",()=>swap(list,i,i+1),i===list.length-1);
+      const delB=btn(ico.del,"del","削除",()=>{
+        if(!delB.classList.contains("confirm")){delB.classList.add("confirm");delB.textContent="削除する";setTimeout(()=>{if(delB.isConnected&&delB.classList.contains("confirm")){delB.classList.remove("confirm");delB.innerHTML=ico.del}},3000);return}
+        items=items.filter(x=>x!==it);if(curId===it.id)curId=null;cacheItems();renderList();ui();remoteDel(it.id);toast("削除しました");
+      });
+      row.append(t,pinB,upB,dnB,delB);body.appendChild(row);
+    });
+  }
+  const n=document.createElement("p");n.className="note";n.textContent="▲▼で並べ替え、ピンで一番上に固定。削除は2回タップで確定します。";body.appendChild(n);
+  addBackup(body);
+}
+function swap(list,a,b){if(b<0||b>=list.length)return;list.forEach((x,i)=>x.order=i);[list[a].order,list[b].order]=[list[b].order,list[a].order];commit(list)}
+function commit(changed){sortItems();cacheItems();renderList();ui();changed.forEach(remotePut)}
+
+/* backup export / import */
+function addBackup(body){
+  const r=document.createElement("div");r.className="row";
+  const ex=document.createElement("button");ex.className="btn";ex.textContent="バックアップを書き出す";
+  ex.onclick=()=>{if(!items.length){toast("保存リストが空です");return}
+    const blob=new Blob([JSON.stringify({app:"yomiage-note",v:1,items},null,1)],{type:"application/json"});
+    const a=document.createElement("a");a.href=URL.createObjectURL(blob);const d=new Date();
+    a.download="yomiage-backup-"+d.getFullYear()+String(d.getMonth()+1).padStart(2,"0")+String(d.getDate()).padStart(2,"0")+".json";
+    document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},1000);toast("書き出しました")};
+  const im=document.createElement("button");im.className="btn";im.textContent="バックアップから読み込む";
+  im.onclick=()=>$("bkfile").click();
+  r.append(ex,im);body.appendChild(r);
+}
+$("bkfile").onchange=async e=>{
+  const f=e.target.files[0];if(!f)return;e.target.value="";
+  try{const j=JSON.parse(await f.text());const list=Array.isArray(j)?j:j.items;if(!Array.isArray(list))throw 0;
+    let n=0;const have=new Set(items.map(x=>x.id));
+    list.forEach(x=>{if(x&&typeof x.body==="string"&&!have.has(x.id)){items.push({id:x.id||newId(),title:String(x.title||"無題"),body:x.body,pinned:!!x.pinned,order:+x.order||0,updated:+x.updated||Date.now()});n++}});
+    sortItems();cacheItems();renderList();ui();toast(n+"件を追加しました");
+  }catch(_){toast("バックアップファイルを読み込めませんでした")}
+};
+
+/* sheets */
+function openSheet(id){$("scrim").hidden=false;["shSave","shList","shSet"].forEach(s=>$(s).hidden=s!==id)}
+function closeSheets(){$("scrim").hidden=true;["shSave","shList","shSet"].forEach(s=>$(s).hidden=true)}
+$("scrim").onclick=closeSheets;document.querySelectorAll("[data-close]").forEach(b=>b.onclick=closeSheets);
+$("nSet").onclick=()=>{loadVoices();ui();openSheet("shSet")};
+$("saveTitle").addEventListener("keydown",e=>{if(e.key==="Enter")$("saveBtns").firstChild.click()});
+
+/* first run sample */
+if(!ed.value){ed.value="よみあげノートへようこそ。ここに文章を貼り付けて、下の再生ボタンを押すと読み上げが始まります。\n速度は上のボタンで1倍から3倍まで切り替えられます。戻る・進むの秒数は設定で10秒、20秒、30秒から選べます。\nよく使う文章は「保存」でリストに入れておき、ピン留めすると一番上に固定できます。";curTitle="使い方（サンプル）"}
+ui();
+})();
+
+if("serviceWorker" in navigator){window.addEventListener("load",()=>navigator.serviceWorker.register("sw.js").catch(()=>{}))}
+</script>
+
+</body></html>
