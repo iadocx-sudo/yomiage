@@ -149,6 +149,10 @@ input[type=text],select{font:inherit;font-size:16px;color:var(--ink);background:
     <div class="f" style="display:flex;flex-direction:column;gap:6px;font-size:13px;color:var(--mute)">進むボタンの秒数<div class="seg" id="segFwd"></div></div>
     <p class="note">秒数は「いまの速度で聞いた時間」です。2倍速で20秒戻ると、等倍の約40秒分の文字が戻ります。読み上げ速度は再生しながら自動で学習し、精度が上がります（現在の推定：等倍で毎秒 <b id="cpsNow">-</b> 字）。</p>
     <div class="row"><button class="btn" id="resetCps">速度の学習をリセット</button></div>
+    <div class="group" style="margin:8px 0 -6px">端末間の同期（GitHub）</div>
+    <label class="f">GitHubのトークン（gist権限）<input type="text" id="ghToken" autocomplete="off" spellcheck="false" placeholder="ghp_… または github_pat_…"></label>
+    <div class="row"><button class="btn pri" id="syncNow">保存して同期</button><button class="btn" id="syncOff">同期をやめる</button></div>
+    <p class="note" id="syncNote">PCとスマホに同じトークンを入れると、保存リストが自動で同期されます。データはあなたのGitHubの非公開Gistに保存されます。</p>
   </div>
 </section>
 
@@ -314,26 +318,66 @@ $("file").onchange=async e=>{
 };
 $("nClear").onclick=()=>{stop();ed.value="";pos=0;curId=null;curTitle="";persist();ui();toast("画面をクリアしました（保存リストは残ります）")};
 
-/* ---------- storage: db (account) with localStorage fallback ---------- */
-let items=LS.get("yn.items",[]), db=null, col=null;
+/* ---------- storage: local + GitHub Gist sync ---------- */
+let items=LS.get("yn.items",[]);
+let tombs=LS.get("yn.tombs",{});
 function setSync(t){$("sync").textContent=t}
 const sortItems=()=>items.sort((a,b)=>(b.pinned-a.pinned)||(a.order-b.order));
-function cacheItems(){LS.set("yn.items",items)}
-async function remotePut(it){if(!col)return;try{await col.doc(it.id).set(it)}catch(e){setSync("同期エラー");}}
-async function remoteDel(id){if(!col)return;try{await col.doc(id).delete()}catch(e){setSync("同期エラー")}}
-(async()=>{
+function cacheItems(){LS.set("yn.items",items);LS.set("yn.tombs",tombs)}
+function remotePut(it){if(it)it.updated=Date.now();schedulePush()}
+function remoteDel(id){tombs[id]=Date.now();cacheItems();schedulePush()}
+
+const GH="https://api.github.com", GFILE="yomiage-note.json", GDESC="yomiage-note sync (do not delete)";
+let gh=LS.get("yn.gh",{token:"",gist:""}), syncing=false, again=false, pushT=null;
+const ghH=()=>({"Authorization":"Bearer "+gh.token,"Accept":"application/vnd.github+json","X-GitHub-Api-Version":"2022-11-28"});
+async function ghFetch(path,opt={}){
+  const r=await fetch(GH+path,Object.assign({cache:"no-store"},opt,{headers:Object.assign(ghH(),opt.body?{"Content-Type":"application/json"}:{})}));
+  if(r.status===401)throw new Error("トークンが無効です");
+  if(r.status===403||r.status===404&&path==="/gists")throw new Error("トークンにgist権限がありません");
+  if(!r.ok)throw new Error("GitHubエラー "+r.status);
+  return r.json();
+}
+async function findGist(){
+  if(gh.gist){try{return await ghFetch("/gists/"+gh.gist)}catch(e){if(/無効|権限/.test(e.message))throw e;gh.gist=""}}
+  for(let p=1;p<=5;p++){const list=await ghFetch("/gists?per_page=100&page="+p);
+    const g=list.find(x=>x.files&&x.files[GFILE]);if(g){gh.gist=g.id;LS.set("yn.gh",gh);return await ghFetch("/gists/"+g.id)}
+    if(list.length<100)break}
+  return null;
+}
+function merge(rItems,rTombs){
+  const T=Object.assign({},rTombs);for(const k in tombs)T[k]=Math.max(T[k]||0,tombs[k]);
+  const M={};for(const it of [...rItems,...items]){if(!it||typeof it.body!=="string")continue;const o=M[it.id];if(!o||(+it.updated||0)>(+o.updated||0))M[it.id]=it}
+  const cut=Date.now()-120*864e5;for(const k in T)if(T[k]<cut)delete T[k];
+  items=Object.values(M).filter(it=>!(T[it.id]>=(+it.updated||0)));tombs=T;
+}
+async function sync(){
+  if(!gh.token)return; if(syncing){again=true;return} syncing=true; setSync("同期中…");
   try{
-    if(!window.claude||!claude.use)return;
-    const [d,u]=await Promise.all([claude.use("db"),claude.use("user")]);
-    if(!d||!u)return; const uid=await u.id(); if(!uid)return;
-    db=d; col=db.collection("data/users/"+uid);
-    const snap=await col.get(); const remote=[];
-    snap.docs.forEach(x=>{if(x.id!=="settings"){const v=x.data();if(v&&typeof v.body==="string")remote.push(v)}});
-    if(!remote.length&&items.length){for(const it of items)await remotePut(it)}
-    else{items=remote;cacheItems()}
-    sortItems(); setSync("アカウントに保存"); renderList(); ui();
-  }catch(e){setSync("この端末に保存")}
-})();
+    const g=await findGist(); let rI=[],rT={},before="";
+    if(g){const f=g.files[GFILE];let txt=f.content;if(f.truncated)txt=await (await fetch(f.raw_url,{cache:"no-store"})).text();
+      before=txt;try{const j=JSON.parse(txt);rI=j.items||[];rT=j.tombs||{}}catch(_){}}
+    merge(rI,rT); sortItems(); cacheItems();
+    const out=JSON.stringify({app:"yomiage-note",v:1,items,tombs});
+    if(out!==before){
+      const body=JSON.stringify({description:GDESC,files:{[GFILE]:{content:out}}});
+      if(g)await ghFetch("/gists/"+g.id,{method:"PATCH",body});
+      else{const ng=await ghFetch("/gists",{method:"POST",body:JSON.stringify({description:GDESC,public:false,files:{[GFILE]:{content:out}}})});gh.gist=ng.id;LS.set("yn.gh",gh)}
+    }
+    const d=new Date();setSync("同期済み "+d.getHours()+":"+String(d.getMinutes()).padStart(2,"0"));
+    $("syncNote").textContent="同期できています（"+items.length+"件）。PCとスマホの両方に同じトークンを入れてください。";
+    if(!$("shList").hidden)renderList(); ui();
+  }catch(e){setSync("同期エラー");$("syncNote").textContent="同期できませんでした："+(e.message||"通信エラー")+"。電波やトークンを確認してください。"}
+  finally{syncing=false;if(again){again=false;sync()}}
+}
+function schedulePush(){if(!gh.token)return;clearTimeout(pushT);pushT=setTimeout(sync,1500)}
+$("ghToken").value=gh.token?"（設定済み）":"";
+$("ghToken").addEventListener("focus",e=>{if(e.target.value==="（設定済み）")e.target.value=""});
+$("syncNow").onclick=()=>{const v=$("ghToken").value.trim();if(v&&v!=="（設定済み）"){gh={token:v,gist:""};LS.set("yn.gh",gh);$("ghToken").value="（設定済み）"}
+  if(!gh.token){toast("トークンを入力してください");return}sync()};
+$("syncOff").onclick=()=>{gh={token:"",gist:""};LS.set("yn.gh",gh);$("ghToken").value="";setSync("端末に保存");$("syncNote").textContent="同期をやめました。保存リストはこの端末に残っています。";toast("同期をやめました")};
+document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible")sync()});
+window.addEventListener("online",()=>sync());
+if(gh.token)setTimeout(sync,300);
 
 function newId(){return "t"+Date.now().toString(36)+Math.random().toString(36).slice(2,6)}
 function bytes(s){return new Blob([s]).size}
@@ -346,7 +390,7 @@ $("nSave").onclick=()=>{
   const box=$("saveBtns"); box.innerHTML="";
   const mk=(label,cls,fn)=>{const b=document.createElement("button");b.className="btn "+cls;b.textContent=label;b.onclick=fn;box.appendChild(b)};
   if(ex){mk("上書き保存","pri",()=>doSave(ex));mk("別名で保存","",()=>doSave(null))}else mk("保存する","pri",()=>doSave(null));
-  $("saveNote").textContent=bytes(ed.value)>240000?"長い文章のため、アカウントには保存できずこの端末だけに保存されます。":"";
+  $("saveNote").textContent="";
   openSheet("shSave"); setTimeout(()=>$("saveTitle").focus(),50);
 };
 async function doSave(ex){
@@ -356,7 +400,7 @@ async function doSave(ex){
   if(ex){it=Object.assign(ex,{title,body:ed.value,updated:now})}
   else{const minO=items.filter(x=>!x.pinned).reduce((m,x)=>Math.min(m,x.order),1);it={id:newId(),title,body:ed.value,pinned:false,order:minO-1,updated:now};items.push(it)}
   curId=it.id; curTitle=title; sortItems(); cacheItems(); persist(); closeSheets(); ui(); toast("保存しました");
-  if(bytes(it.body)<=240000)remotePut(it);
+  remotePut(it);
 }
 
 /* list sheet */
@@ -396,7 +440,7 @@ function renderList(){
   addBackup(body);
 }
 function swap(list,a,b){if(b<0||b>=list.length)return;list.forEach((x,i)=>x.order=i);[list[a].order,list[b].order]=[list[b].order,list[a].order];commit(list)}
-function commit(changed){sortItems();cacheItems();renderList();ui();changed.forEach(remotePut)}
+function commit(changed){const now=Date.now();changed.forEach(x=>x.updated=now);sortItems();cacheItems();renderList();ui();schedulePush()}
 
 /* backup export / import */
 function addBackup(body){
@@ -416,7 +460,7 @@ $("bkfile").onchange=async e=>{
   try{const j=JSON.parse(await f.text());const list=Array.isArray(j)?j:j.items;if(!Array.isArray(list))throw 0;
     let n=0;const have=new Set(items.map(x=>x.id));
     list.forEach(x=>{if(x&&typeof x.body==="string"&&!have.has(x.id)){items.push({id:x.id||newId(),title:String(x.title||"無題"),body:x.body,pinned:!!x.pinned,order:+x.order||0,updated:+x.updated||Date.now()});n++}});
-    sortItems();cacheItems();renderList();ui();toast(n+"件を追加しました");
+    sortItems();cacheItems();renderList();ui();schedulePush();toast(n+"件を追加しました");
   }catch(_){toast("バックアップファイルを読み込めませんでした")}
 };
 
