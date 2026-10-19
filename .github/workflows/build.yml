@@ -1,0 +1,34 @@
+name: build-apk
+on:
+  push:
+    paths: ["android.zip", "index.html", ".github/workflows/build.yml"]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unpack Android project
+        run: |
+          unzip -q -o android.zip -d src
+          mkdir -p src/android/app/src/main/assets
+          cp index.html manifest.json sw.js icon-192.png icon-512.png src/android/app/src/main/assets/
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+      - name: Build APK
+        working-directory: src/android
+        run: gradle assembleDebug --no-daemon --stacktrace
+      - name: Publish to Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp src/android/app/build/outputs/apk/debug/app-debug.apk yomiage.apk
+          gh release delete latest -y --cleanup-tag || true
+          gh release create latest yomiage.apk --title "よみあげノート Android版 (build ${{ github.run_number }})" --notes "yomiage.apk をダウンロードしてインストールしてください。"
