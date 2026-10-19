@@ -204,9 +204,39 @@ function snap(p){ // move to a natural break just before p
   return p;
 }
 
+/* ---------- native app bridge (Android APK) ---------- */
+let NATIVE=null;try{if(window.YomiageNative&&YomiageNative.isNative())NATIVE=YomiageNative}catch(e){}
+let nst=null,lastDone=null;
+function nativePlay(p){
+  build();
+  NATIVE.play(JSON.stringify({text:ed.value,chunks:chunks.map(c=>[c.s,c.e]),start:p,rate:S.rate,cps:S.cps,back:S.back,fwd:S.fwd,voice:S.voice||"",title:curTitle||"よみあげノート"}));
+  pos=p;uttBase=p;uttLen=0;nst=Object.assign(nst||{},{playing:true,pos:p,base:p,len:0});ui();
+}
+function nativePoll(){
+  try{nst=JSON.parse(NATIVE.state())}catch(e){return}
+  if(lastDone===null)lastDone=nst.done;
+  if(nst.done!==lastDone){lastDone=nst.done;if(playing){playing=false;pos=ed.value.length;persist();toast("最後まで読みました")}}
+  else if(playing!==nst.playing){playing=nst.playing;pos=nst.pos;persist()}
+  uttBase=nst.base;uttLen=nst.len;
+  if(nst.cps&&Math.abs(nst.cps-S.cps)>0.05){S.cps=+nst.cps.toFixed(2);saveS()}
+  ui();
+}
+window.__ynShare=t=>{stop();ed.value=t;pos=0;curId=null;curTitle="共有されたテキスト";persist();ui();toast("共有されたテキストを読み込みました")};
+
 /* ---------- voices ---------- */
 let voices=[];
+let nvTry=0;
 function loadVoices(){
+  if(NATIVE){
+    let list=[];try{list=JSON.parse(NATIVE.voices())}catch(e){}
+    const sel=$("voice");sel.innerHTML='<option value="">標準の声</option>';
+    list.forEach(v=>{const o=document.createElement("option");o.value=v.id;o.textContent=v.name;sel.appendChild(o)});
+    if(!list.some(v=>v.id===S.voice))S.voice="";
+    sel.value=S.voice;$("testVoice").hidden=true;
+    $("voiceNote").textContent=list.length?list.length+"種類の日本語音声が使えます。再生中に変えるとすぐ反映されます。":"音声を準備中です…";
+    if(!list.length&&nvTry++<10)setTimeout(loadVoices,1000);
+    return;
+  }
   voices=synth?synth.getVoices().filter(v=>/^ja/i.test(v.lang)):[];
   const sel=$("voice"); sel.innerHTML="";
   if(!voices.length){sel.innerHTML='<option value="">端末の標準の声</option>';$("voiceNote").textContent="日本語の声が見つかりません。Androidの設定 →「テキスト読み上げ」で Google 音声サービスの日本語データを入れると選べるようになります。";return}
@@ -215,49 +245,91 @@ function loadVoices(){
   sel.value=S.voice;
   $("voiceNote").textContent=voices.length+"種類の日本語音声が使えます。声の種類はスマホの音声エンジン次第です。";
 }
-if(synth){loadVoices();synth.onvoiceschanged=loadVoices}
-$("voice").onchange=e=>{S.voice=e.target.value;saveS();if(playing)speakFrom(curPos())};
+if(NATIVE)loadVoices();else if(synth){loadVoices();synth.onvoiceschanged=loadVoices}
+$("voice").onchange=e=>{S.voice=e.target.value;saveS();if(NATIVE){NATIVE.setVoice(S.voice);return}if(playing)speakFrom(curPos())};
 $("testVoice").onclick=()=>{if(!synth)return;stop();const u=new SpeechSynthesisUtterance("この声で読み上げます。速度は"+S.rate+"倍です。");applyVoice(u);synth.speak(u)};
 function applyVoice(u){u.lang="ja-JP";u.rate=S.rate;const v=voices.find(v=>v.voiceURI===S.voice);if(v)u.voice=v}
 
 /* ---------- playback ---------- */
 function curPos(){
+  if(NATIVE)return (playing&&nst)?nst.pos:pos;
   if(!playing)return pos;
   if(lastBoundary!=null)return Math.min(uttBase+uttLen,lastBoundary);
   const est=(performance.now()-uttT0)/1000*S.cps*S.rate;
   return Math.min(uttBase+uttLen,uttBase+Math.floor(est));
 }
+const AHEAD=40; let qNext=0, qMy=0;
 function speakFrom(p){
+  if(NATIVE){nativePlay(Math.max(0,Math.min(p,ed.value.length)));return}
   if(!synth){toast("このブラウザは読み上げに対応していません");return}
-  build(); const my=++token; synth.cancel();
+  build(); const my=++token; qMy=my; queued=0; synth.cancel();
   const t=ed.value; p=Math.max(0,Math.min(p,t.length));
   const i=chunkAt(p); if(i>=chunks.length){finish();return}
-  const s=Math.max(p,chunks[i].s), e=chunks[i].e, str=t.slice(s,e);
-  pos=s; uttBase=s; uttLen=str.length; lastBoundary=null;
-  if(!str.trim()){speakFrom(e);return}
-  const u=new SpeechSynthesisUtterance(str); applyVoice(u); utt=u;
-  u.onstart=()=>{if(my===token)uttT0=performance.now()};
-  u.onboundary=ev=>{if(my===token&&typeof ev.charIndex==="number"&&ev.charIndex>0)lastBoundary=uttBase+ev.charIndex};
-  u.onend=()=>{
-    if(my!==token)return;
-    const dur=(performance.now()-uttT0)/1000;
-    if(dur>1.2&&uttLen>=12){const c=uttLen/(dur*S.rate);if(c>2&&c<20){S.cps=+(S.cps*0.8+c*0.2).toFixed(2);saveS()}}
-    pos=e; if(playing)speakFrom(e);
-  };
-  u.onerror=ev=>{if(my!==token)return;if(ev.error==="interrupted"||ev.error==="canceled")return;playing=false;ui();toast("読み上げエラー："+ev.error)};
-  uttT0=performance.now();
-  setTimeout(()=>{if(my===token)synth.speak(u)},40);
-  ui();
+  pos=Math.max(p,chunks[i].s); uttBase=pos; uttLen=chunks[i].e-pos; lastBoundary=null; uttT0=performance.now();
+  qNext=i;
+  setTimeout(()=>{if(my===token)topUp(my,p)},40);
+  ui(); mediaState();
+}
+let queued=0;
+function topUp(my,startAt){
+  const t=ed.value;
+  while(my===token&&queued<AHEAD&&qNext<chunks.length){
+    const c=chunks[qNext++]; const s=Math.max(c.s,startAt||0), e=c.e, str=t.slice(s,e); startAt=0;
+    if(!str.trim()){continue}
+    const u=new SpeechSynthesisUtterance(str); applyVoice(u); queued++;
+    u.onstart=()=>{if(my!==token)return;uttBase=s;uttLen=e-s;pos=s;lastBoundary=null;uttT0=performance.now();ui()};
+    u.onboundary=ev=>{if(my===token&&typeof ev.charIndex==="number"&&ev.charIndex>0)lastBoundary=s+ev.charIndex};
+    u.onend=()=>{
+      if(my!==token)return; queued--;
+      const dur=(performance.now()-uttT0)/1000;
+      if(dur>1.2&&(e-s)>=12){const k=(e-s)/(dur*S.rate);if(k>2&&k<20){S.cps=+(S.cps*0.8+k*0.2).toFixed(2);saveS()}}
+      pos=e; lastBoundary=null;
+      if(!playing)return;
+      if(queued===0&&qNext>=chunks.length){finish();return}
+      topUp(my);
+    };
+    u.onerror=ev=>{if(my!==token)return;queued--;if(ev.error==="interrupted"||ev.error==="canceled")return;playing=false;keepAlive(false);ui();toast("読み上げエラー："+ev.error)};
+    synth.speak(u);
+  }
+}
+/* keep the page alive with the screen off: silent audio loop + media session (lock-screen controls) */
+let ka=null;
+function silentWav(){const sr=8000,n=sr*2,buf=new ArrayBuffer(44+n*2),v=new DataView(buf);
+  const w=(o,str)=>{for(let i=0;i<str.length;i++)v.setUint8(o+i,str.charCodeAt(i))};
+  w(0,"RIFF");v.setUint32(4,36+n*2,true);w(8,"WAVE");w(12,"fmt ");v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,1,true);
+  v.setUint32(24,sr,true);v.setUint32(28,sr*2,true);v.setUint16(32,2,true);v.setUint16(34,16,true);w(36,"data");v.setUint32(40,n*2,true);
+  for(let i=0;i<n;i++)v.setInt16(44+i*2,(i%2?1:-1),true); // inaudible ±1 LSB so it is not treated as pure silence
+  return URL.createObjectURL(new Blob([buf],{type:"audio/wav"}))}
+function keepAlive(on){
+  if(NATIVE)return;
+  try{
+    if(on){if(!ka){ka=new Audio(silentWav());ka.loop=true;ka.volume=1;ka.setAttribute("playsinline","")}ka.play().catch(()=>{})}
+    else if(ka)ka.pause();
+  }catch(e){}
+  mediaState();
+}
+function mediaState(){
+  if(!("mediaSession" in navigator))return;
+  try{
+    navigator.mediaSession.metadata=new MediaMetadata({title:curTitle||"よみあげノート",artist:"よみあげノート "+S.rate+"×",artwork:[{src:"icon-512.png",sizes:"512x512",type:"image/png"}]});
+    navigator.mediaSession.playbackState=playing?"playing":"paused";
+  }catch(e){}
+}
+if("mediaSession" in navigator){
+  const h=(a,f)=>{try{navigator.mediaSession.setActionHandler(a,f)}catch(e){}};
+  h("play",()=>{if(!playing)play()}); h("pause",()=>{if(playing)stop()}); h("stop",()=>{if(playing)stop()});
+  h("seekbackward",()=>skip(-1)); h("seekforward",()=>skip(1));
+  h("previoustrack",()=>skip(-1)); h("nexttrack",()=>skip(1));
 }
 function play(){
   if(!ed.value.trim()){toast("文章を入力してください");return}
   build();
   if(ed.selectionStart!==ed.selectionEnd&&document.activeElement===ed)pos=ed.selectionStart;
   if(pos>=ed.value.length)pos=0;
-  playing=true; ed.blur(); lockWake(); speakFrom(snap(pos));
+  playing=true; ed.blur(); lockWake(); keepAlive(true); queued=0; speakFrom(snap(pos));
 }
-function stop(){pos=curPos();playing=false;token++;if(synth)synth.cancel();releaseWake();ui();persist()}
-function finish(){playing=false;pos=ed.value.length;releaseWake();ui();persist();toast("最後まで読みました")}
+function stop(){if(NATIVE){try{nst=JSON.parse(NATIVE.state())}catch(e){}NATIVE.pause()}pos=curPos();playing=false;token++;queued=0;if(synth)synth.cancel();keepAlive(false);releaseWake();ui();persist()}
+function finish(){playing=false;pos=ed.value.length;keepAlive(false);releaseWake();ui();persist();toast("最後まで読みました")}
 function skip(dir){
   const sec=dir<0?S.back:S.fwd;
   const chars=Math.round(sec*S.cps*S.rate);
@@ -297,10 +369,10 @@ function ui(){
   $("docName").innerHTML=""; $("docName").append(curTitle||"新しいテキスト"); if(curId&&items.some(x=>x.id===curId)){const sm=document.createElement("small");sm.textContent="保存済み";$("docName").append(sm)}
   $("cpsNow").textContent=S.cps.toFixed(1);
 }
-setInterval(()=>{if(playing)ui()},400);
+setInterval(()=>{if(NATIVE)nativePoll();else if(playing)ui()},400);
 
 RATES.forEach(r=>{const b=document.createElement("button");b.className="chip";b.dataset.r=r;b.textContent=r.toFixed(1)+"×";b.onclick=()=>{S.rate=r;saveS();if(playing)speakFrom(snap(curPos()));ui()};$("speeds").appendChild(b)});
-function seg(el,key){SECS.forEach(s=>{const b=document.createElement("button");b.className="chip";b.textContent=s+"秒";b.onclick=()=>{S[key]=s;saveS();paint();ui()};el.appendChild(b)});const paint=()=>[...el.children].forEach((b,i)=>b.setAttribute("aria-pressed",SECS[i]===S[key]));paint()}
+function seg(el,key){SECS.forEach(s=>{const b=document.createElement("button");b.className="chip";b.textContent=s+"秒";b.onclick=()=>{S[key]=s;saveS();paint();ui();if(NATIVE)NATIVE.setSkip(S.back,S.fwd)};el.appendChild(b)});const paint=()=>[...el.children].forEach((b,i)=>b.setAttribute("aria-pressed",SECS[i]===S[key]));paint()}
 seg($("segBack"),"back"); seg($("segFwd"),"fwd");
 $("resetCps").onclick=()=>{S.cps=7;saveS();ui();toast("学習をリセットしました")};
 
@@ -447,6 +519,8 @@ function addBackup(body){
   const r=document.createElement("div");r.className="row";
   const ex=document.createElement("button");ex.className="btn";ex.textContent="バックアップを書き出す";
   ex.onclick=()=>{if(!items.length){toast("保存リストが空です");return}
+    if(NATIVE){const d=new Date();const nm="yomiage-backup-"+d.getFullYear()+String(d.getMonth()+1).padStart(2,"0")+String(d.getDate()).padStart(2,"0")+".json";
+      toast(NATIVE.saveDownload(nm,JSON.stringify({app:"yomiage-note",v:1,items},null,1))?"ダウンロードフォルダに保存しました":"保存できませんでした");return}
     const blob=new Blob([JSON.stringify({app:"yomiage-note",v:1,items},null,1)],{type:"application/json"});
     const a=document.createElement("a");a.href=URL.createObjectURL(blob);const d=new Date();
     a.download="yomiage-backup-"+d.getFullYear()+String(d.getMonth()+1).padStart(2,"0")+String(d.getDate()).padStart(2,"0")+".json";
