@@ -1,7 +1,7 @@
 name: build-apk
 on:
   push:
-    paths: ["android.zip", "index.html", "icon-192.png", ".github/workflows/build.yml"]
+    paths: ["android.zip", "index.html", "icon-192.png", "overrides/**", ".github/workflows/build.yml"]
   workflow_dispatch:
 permissions:
   contents: write
@@ -16,6 +16,7 @@ jobs:
           mkdir -p src/android/app/src/main/assets
           cp index.html manifest.json sw.js icon-192.png icon-512.png src/android/app/src/main/assets/
           cp icon-192.png src/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+          if [ -d overrides ]; then cp -r overrides/. src/android/; fi
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
