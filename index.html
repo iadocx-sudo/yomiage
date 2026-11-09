@@ -114,7 +114,7 @@ input[type=text],select{font:inherit;font-size:16px;color:var(--ink);background:
   </div>
   <nav>
     <button id="nOpen"><svg viewBox="0 0 24 24"><path d="M4 4h10l6 6v10H4z"/><path d="M14 4v6h6M12 13v5M9.5 15.5 12 18l2.5-2.5"/></svg>読込</button>
-    <button id="nClear"><svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg>クリア</button>
+    <button id="nClear"><svg viewBox="0 0 24 24"><path d="M9 4h6v3H9zM9 5H6v15h12V5h-3M9 12h6M9 16h6"/></svg>貼り付け</button>
     <button id="nSave"><svg viewBox="0 0 24 24"><path d="M6 3h12v18l-6-4-6 4z"/></svg>保存</button>
     <button id="nList"><svg viewBox="0 0 24 24"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/></svg>保存リスト</button>
     <button id="nSet"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-2.7-1.1l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.6 1.6 0 0 0 3.5 14H3a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1.1-2.7l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.6 1.6 0 0 0 9.7 3.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 2.7 1.1l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0 1.1 2.7H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1.3z"/></svg>設定</button>
@@ -388,7 +388,18 @@ $("file").onchange=async e=>{
   if((t.match(/\uFFFD/g)||[]).length>3){try{t=new TextDecoder("shift_jis").decode(buf)}catch(_){}}
   stop(); ed.value=t.replace(/^\uFEFF/,""); pos=0; curId=null; curTitle=f.name.replace(/\.[^.]+$/,""); persist(); ui(); toast("「"+curTitle+"」を読み込みました");
 };
-$("nClear").onclick=()=>{stop();ed.value="";pos=0;curId=null;curTitle="";persist();ui();toast("画面をクリアしました（保存リストは残ります）")};
+async function readClip(){
+  try{if(NATIVE&&typeof NATIVE.clipboard==="function")return {ok:true,text:NATIVE.clipboard()||""}}catch(e){}
+  try{if(navigator.clipboard&&navigator.clipboard.readText)return {ok:true,text:await navigator.clipboard.readText()}}catch(e){}
+  return {ok:false,text:""};
+}
+$("nClear").onclick=async()=>{
+  const c=await readClip(); const t=(c.text||"").replace(/\r\n?/g,"\n");
+  stop(); ed.value=t; pos=0; curId=null; curTitle=""; ed.scrollTop=0; ed.blur(); persist(); ui();
+  if(t.trim())toast("貼り付けました（"+t.length.toLocaleString()+"字）");
+  else if(c.ok)toast("コピーした文章がないため、クリアだけしました");
+  else toast("コピー内容を読めないため、クリアだけしました");
+};
 
 /* ---------- storage: local + GitHub Gist sync ---------- */
 let items=LS.get("yn.items",[]);
